@@ -235,7 +235,7 @@ if __name__ == "__main__":
 
 
   # determine crossing valve locations and add crossing elevations
-  print("===== DETERMINE CROSSING VALVE LOCATIONS AND ADD CROSSING LEVATIONS =====")
+  print("===== DETERMINE CROSSING VALVE LOCATIONS AND ADD CROSSING ELEVATIONS =====")
   for x, y in ROAD_CROSSINGS:
     x, y = float(x), float(y)
 
@@ -275,6 +275,7 @@ if __name__ == "__main__":
   crossing_valve_locations.append((TOTAL_DISTANCE, TOTAL_DISTANCE, 'END'))
 
   # sliding window algorithm
+  # there is no valve requirements for roads
   k = 2 # window size
   for i in range(len(crossing_valve_locations) - k + 1):
     crossing1 = crossing_valve_locations[i]
@@ -282,10 +283,11 @@ if __name__ == "__main__":
 
     distance = crossing2[0] - crossing1[1]
     num_sections = int(np.ceil(distance / 300))
-    print(crossing1, crossing2)
-    print(num_sections, distance)
 
-    # number of separations is equal to num_valves_between - 1
+    # number of sections is equal to num_valves_between + 1
+    # example
+    # ---- | ---- | ----
+    # 3 sections, 2 valves
     num_valves_between = num_sections - 1
     for n in range(1, num_valves_between + 1):
       distance_between_valves = distance / num_sections
