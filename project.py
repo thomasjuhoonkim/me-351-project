@@ -1,5 +1,7 @@
 import numpy as np
 import csv
+import collections
+import bisect
 
 # ========== CONSTANTS START ==========
 
@@ -10,13 +12,17 @@ P = 1000 # density (kg/m^2)
 MU = 8.9e-4 # dynamic viscosity (Pa.s)
 G = 9.81 # gravity (N/kg)
 
+TOTAL_DISTANCE = 62550 # distance from lake ontario to E5 (m)
+
 # pressure constants
 ATM_PRESSURE = 101325 # atmospheric pressure (Pa)
 MIN_PRESSURE = 275000 + ATM_PRESSURE # 275 kPag is gauge pressure (Pa)
 MAX_PRESSURE = 700000 + ATM_PRESSURE # 700 kPag is gauge pressure (Pa)
 
 # minor loss coefficients (dimensionless)
-KL_90_DEG_BENDS = 0.3
+KL_180_DEG_RETURN_BEND = 0.2
+KL_90_DEG_MITRE_BEND_VANES = 0.2
+KL_90_DEG_SMOOTH_BEND = 0.3
 KL_GATE_VALVE = 0.2
 KL_FLOW_METER = 7
 KL_SWING_CHECK_VALVE = 2
@@ -148,15 +154,19 @@ def get_railway_crossing(x1, pipe_type_1, y1, x2, x2_pipe_type, y2):
 # pump station supplies max allowable pressure minus minor losses
 def add_pump_station(x, pipe_type, valve_locations):
 
-  NUM_90_DEG_BENDS = 4
+  NUM_90_DEG_SMOOTH_BENDS = 4
   NUM_GATE_VALVES = 6
   NUM_FLOW_METERS = 1
   NUM_SWING_CHECK_VALVES = 1
 
+  # check for redundant valves (more than 2 valves every 300 m) and if present, remove them
+  while len(valve_locations) >= 2 and x - valve_locations[-2] <= 300:
+    valve_locations.pop()
+
   for _ in range(NUM_GATE_VALVES):
     valve_locations.append(x)
 
-  KL_COMBINED = NUM_90_DEG_BENDS * KL_90_DEG_BENDS + \
+  KL_COMBINED = NUM_90_DEG_SMOOTH_BENDS * KL_90_DEG_SMOOTH_BEND + \
                 NUM_GATE_VALVES * KL_GATE_VALVE + \
                 NUM_FLOW_METERS * KL_FLOW_METER + \
                 NUM_SWING_CHECK_VALVES * KL_SWING_CHECK_VALVE
@@ -171,10 +181,16 @@ def add_pump_station(x, pipe_type, valve_locations):
 
 # ========== UTILITY FUNCTIONS START ==========
 
+def remove_within_range_list_of_tuples(l, lower, upper):
+  return [tup for tup in l if tup[0] <= lower or upper <= tup[0]]
+
+def custom_round(x, base=50):
+  return base * round(x/base)
+
 # import the csv into the script ('name' is for logging purposes)
 def import_data(name, path):
   print(f'Importing {name}...')
-  data = []
+  data = collections.deque()
 
   with open(path) as csv_file:
     csv_reader = csv.reader(csv_file)
@@ -184,12 +200,13 @@ def import_data(name, path):
         print(f'Column names are "{", ".join(row)}"')
         line_count += 1
       else:
+        row = tuple(float(num) for num in row)
         data.append(row)
         line_count += 1
     print(f'Processed {line_count} lines')
 
   print("-----")
-  return reversed(data) # flip the data ahead of time so that .pop() is O(1)
+  return data
 
 def export_data(name, path):
   pass
@@ -202,18 +219,84 @@ def export_data(name, path):
 
 if __name__ == "__main__":
   # import data
-  print("===== IMPORTING DATA =====")
+  print("===== IMPORT DATA =====")
   ROAD_CROSSINGS = import_data('Road Crossings', 'data/road_crossings.csv')
   RAILWAY_CROSSINGS = import_data('Railway Crossings', 'data/railway_crossings.csv')
   WATER_CROSSINGS = import_data('Water Crossings', 'data/water_crossings.csv')
   ELEVATION_PROFILE = import_data('Elevation Profile', 'data/elevation_profile.csv')
+
 
   # initialize runtime variables
   valve_locations = [] # array of all valve locations x-coor
   crossing_valve_locations = [] # array of pairs of valves at start and end of crossings
   pressure = 0
   cost = 0
+  num_pump_stations = 0
 
+
+  # determine crossing valve locations and add crossing elevations
+  print("===== DETERMINE CROSSING VALVE LOCATIONS AND ADD CROSSING LEVATIONS =====")
+  for x, y in ROAD_CROSSINGS:
+    x, y = float(x), float(y)
+
+    # elevation of the crossing might not be relevant
+    bisect.insort_left(ELEVATION_PROFILE, (x, y), key=lambda x: x[0])
+
+  for x, y in RAILWAY_CROSSINGS:
+    x, y = float(x), float(y)
+
+    x_entry = max(0, x - 100) # ensure location is not less than 0
+    x_exit = min(TOTAL_DISTANCE, x + 100) # ensure exit valve is not placed after E5
+
+    bisect.insort_left(crossing_valve_locations, (x_entry, x_exit, 'RAILWAY CROSSING'), key=lambda x: x[0])
+
+    # elevation of the crossing might not be relevant here (remove this for cost savings)
+    bisect.insort_left(ELEVATION_PROFILE, (x, y), key=lambda x: x[0])
+
+  for x1, y1, x2, y2 in WATER_CROSSINGS:
+    x1, y1, x2, y2 = float(x1), float(y1), float(x2), float(y2)
+
+    x_entry = max(0, x1 - 100) # ensure location is not less than 0
+    x_exit = min(TOTAL_DISTANCE, x2 + 100) # ensure exit valve is not placed after E5
+
+    bisect.insort_left(crossing_valve_locations, (x_entry, x_exit, 'WATER CROSSING'), key=lambda x: x[0])
+
+    bisect.insort_left(ELEVATION_PROFILE, (x1, y1), key=lambda x: x[0])
+    bisect.insort_left(ELEVATION_PROFILE, (x2, y2), key=lambda x: x[0])
+
+    # get rid of elevation profiles within water bodies
+    ELEVATION_PROFILE = remove_within_range_list_of_tuples(ELEVATION_PROFILE, x1, x2)
+  
+
+  # determine all valve locations
+  print("===== DETERMINE ALL VALVE LOCATIONS =====")
+  # add placeholder elements
+  crossing_valve_locations.insert(0, (0, 0, 'START'))
+  crossing_valve_locations.append((TOTAL_DISTANCE, TOTAL_DISTANCE, 'END'))
+
+  # sliding window algorithm
+  k = 2 # window size
+  for i in range(len(crossing_valve_locations) - k + 1):
+    crossing1 = crossing_valve_locations[i]
+    crossing2 = crossing_valve_locations[i+k-1]
+
+    distance = crossing2[0] - crossing1[1]
+    num_sections = int(np.ceil(distance / 300))
+    print(crossing1, crossing2)
+    print(num_sections, distance)
+
+    # number of separations is equal to num_valves_between - 1
+    num_valves_between = num_sections - 1
+    for n in range(1, num_valves_between + 1):
+      distance_between_valves = distance / num_sections
+      valve_locations.append(crossing1[0] + n * distance_between_valves)
+    
+    # append the valves at the crossings excluding the first and last placeholder elements
+    if i < len(crossing_valve_locations) - k + 1:
+      valve_locations.append(crossing2[0])
+      valve_locations.append(crossing2[1])
+  
+  
 
 
 
