@@ -1,3 +1,8 @@
+# ME 351 Project Code
+# Thomas Kim (20890782)
+# Maddy Kim (20769671)
+# MIT License (MIT)
+
 import numpy as np
 import csv
 import collections
@@ -554,7 +559,7 @@ if __name__ == "__main__":
         # meaning that the valve nearest to us is redundant
         backward_index = valve_index - 2
         while backward_index >= 0 and 0 <= x1 - valve_locations[backward_index] <= MAX_DISTANCE_BETWEEN_VALVES:
-          print(f"Removing {VALVE} due to backward redundancy where valve at {valve_locations[backward_index + 1]} is between two valves {valve_locations[backward_index]} and {x1} that are less than or equal to {MAX_DISTANCE_BETWEEN_VALVES} meters apart")
+          print(f"Removing {VALVE} due to backward redundancy where valve at {valve_locations[backward_index + 1]} is between two valves {valve_locations[backward_index]} and {x1} that are only {x1 - valve_locations[backward_index]} meters apart")
           del valve_locations[backward_index + 1]
           valve_index -= 1 # move index back one step due to removal
           backward_index = valve_index - 2
@@ -564,7 +569,7 @@ if __name__ == "__main__":
         # we decide on removing or not
         forward_index = valve_index + 1
         while forward_index < len(valve_locations) and 0 <= valve_locations[forward_index] - x1 <= MAX_DISTANCE_BETWEEN_VALVES:
-          print(f"Removing {VALVE} due to forward redundancy where valve at {valve_locations[forward_index - 1]} is between two valves {x1} and {valve_locations[forward_index]} that are less than or equal to {MAX_DISTANCE_BETWEEN_VALVES} meters apart")
+          print(f"Removing {VALVE} due to forward redundancy where valve at {valve_locations[forward_index - 1]} is between two valves {x1} and {valve_locations[forward_index]} that are only {valve_locations[forward_index] - x1} meters apart")
           del valve_locations[forward_index - 1]
 
 
