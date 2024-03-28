@@ -5,7 +5,6 @@
 
 import numpy as np
 import csv
-import collections
 import bisect
 
 # ========== UTILITY FUNCTIONS START ==========
@@ -19,7 +18,7 @@ def custom_round(x, base=50):
 # import the csv into the script ('name' is for logging purposes)
 def import_data(name, path):
   print(f'Importing {name}...')
-  data = collections.deque()
+  data = []
 
   with open(path) as csv_file:
     csv_reader = csv.reader(csv_file)
@@ -217,6 +216,32 @@ def get_kilo_pascals(pressure):
 
 # ========== PIPE SECTIONS START ==========
 
+# elbowless pipe section
+def add_elbowless_pipe_section(pipe_type, dx, dy):
+  ID = get_inner_diameter(pipe_type)
+  A = get_cross_sectional_area(ID)
+  V_AVG = get_average_velocity(V_RATE, A)
+  RE = get_reynolds_number(P, V_AVG, ID, MU)
+  F = get_friction_factor_colebrook(E, ID, RE)
+
+  # diagonal pipe length
+  L_diagonal = np.sqrt(dx ** 2 + dy ** 2)
+
+  # major loss
+  dP_major_diagonal = get_major_loss(F, L_diagonal, ID, P, V_AVG)
+
+  # hydrostatic pressure
+  dP_hydrostatic = get_hydrostatic_pressure(P, G, dy)
+
+  # pressure drop
+  dP = dP_hydrostatic - dP_major_diagonal
+
+  # pipe cost
+  cost = get_pipe_cost(pipe_type, L_diagonal)
+
+  return dP, cost
+  
+
 # 1 ╗
 #   ║ ↑           Major losses along length of pipes
 #   ║ y1-y2       Minor losses in two bends
@@ -276,23 +301,27 @@ def add_90_deg_pipe_section(pipe_type, dx, dy):
 # using the add_section as a parameter fed function so that
 # we can change the implementation of building a pipe
 # between two points for potential cost savings
-def add_road_crossing(dx, dy, pipe_type, add_pipe_section=add_90_deg_pipe_section):
+def add_road_crossing(dx, dy, pipe_type, add_pipe_section):
   pressure_delta, cost = add_pipe_section(pipe_type, dx, dy)
   return pressure_delta, cost + COMPONENT_COSTS[ROAD_CROSSING]
 
 # using the add_section as a parameter fed function so that
 # we can change the implementation of building a pipe
 # between two points for potential cost savings
-def add_railway_crossing(dx, dy, pipe_type, add_pipe_section=add_90_deg_pipe_section):
+def add_railway_crossing(dx, dy, pipe_type, add_pipe_section):
   pressure_delta, cost = add_pipe_section(pipe_type, dx, dy)
   return pressure_delta, cost + COMPONENT_COSTS[RAILWAY_CROSSING]
 
 # using the add_section as a parameter fed function so that
 # we can change the implementation of building a pipe
 # between two points for potential cost savings
-def add_water_crossing(dx, dy, pipe_type, add_pipe_section=add_90_deg_pipe_section):
+def add_water_crossing(dx, dy, pipe_type, in_water, add_pipe_section):
   pressure_delta, cost = add_pipe_section(pipe_type, dx, dy)
-  return pressure_delta, cost + COMPONENT_COSTS[WATER_CROSSING]
+
+  if not in_water:
+    cost += COMPONENT_COSTS[WATER_CROSSING]
+
+  return pressure_delta, cost
 
 # pump station can be treated as having no length
 # pump station has no elevation changes (zero hydrostatic pressure changes)
@@ -303,6 +332,7 @@ def add_pump_station(pipe_type):
 
   ID = get_inner_diameter(pipe_type)
   A = get_cross_sectional_area(ID)
+  V_AVG = get_average_velocity(V_RATE, A)
 
   NUM_90_DEG_SMOOTH_BENDS = 4
   NUM_GATE_VALVES = 6
@@ -314,7 +344,7 @@ def add_pump_station(pipe_type):
                 NUM_FLOW_METERS * KL_FLOW_METER + \
                 NUM_SWING_CHECK_VALVES * KL_SWING_CHECK_VALVE
 
-  minor_losses = KL_EQUIVALENT * P * (get_average_velocity(V_RATE, A) ** 2) / 2
+  minor_losses = KL_EQUIVALENT * P * (V_AVG ** 2) / 2
 
   return PRESSURE_MAX - minor_losses, COMPONENT_COSTS[PUMP_STATION]
 
@@ -379,18 +409,19 @@ if __name__ == "__main__":
   for x1, y1, x2, y2 in WATER_CROSSINGS:
     x1, y1, x2, y2 = float(x1), float(y1), float(x2), float(y2)
 
-    bisect.insort_left(crossing_locations, (x1, x2, WATER_CROSSING), key=lambda x: x[0])
+    bisect.insort_left(crossing_locations, (x1, y1, WATER_CROSSING), key=lambda x: x[0])
+    bisect.insort_left(crossing_locations, (x2, y2, WATER_CROSSING), key=lambda x: x[0])
 
     x_entry = max(0, x1 - 100) # ensure location is not less than 0
     x_exit = min(TOTAL_DISTANCE, x2 + 100) # ensure exit valve is not placed after E5
 
     bisect.insort_left(crossing_valve_locations, (x_entry, x_exit, WATER_CROSSING), key=lambda x: x[0])
 
-    bisect.insort_left(ELEVATION_PROFILE, (x1, y1), key=lambda x: x[0])
-    bisect.insort_left(ELEVATION_PROFILE, (x2, y2), key=lambda x: x[0])
+    # bisect.insort_left(ELEVATION_PROFILE, (x1, y1), key=lambda x: x[0])
+    # bisect.insort_left(ELEVATION_PROFILE, (x2, y2), key=lambda x: x[0])
 
     # get rid of elevation profiles within water bodies
-    ELEVATION_PROFILE = remove_within_range_list_of_tuples(ELEVATION_PROFILE, x1, x2)
+    # ELEVATION_PROFILE = remove_within_range_list_of_tuples(ELEVATION_PROFILE, x1, x2)
 
   for crossing_pairs in crossing_valve_locations:
     print(crossing_pairs)
@@ -458,9 +489,10 @@ if __name__ == "__main__":
     valve_index = 0
     pressure_data = [] # (x, pressure)
     pump_station_locations = [] # (x, elevation)
+    in_water = False
 
     # initialize standard pipe function
-    add_pipe_section = add_90_deg_pipe_section
+    add_pipe_section = add_elbowless_pipe_section
 
     # based on the absolute pressure at the pipe inlet
     # when submerged under lake ontario, the pipe will
@@ -498,32 +530,30 @@ if __name__ == "__main__":
         print(f"XXXXX {pipe_type} TERMINATED DUE TO INSUFFICIENT PRESSURE IN THE PREVIOUS SECTION DESPITE A PUMP ({get_kilo_pascals(pressure)} kPa < {get_kilo_pascals(PRESSURE_MIN)} kPa) XXXXX")
         break
 
-      # check crossing index
-      if crossing_index < len(crossing_locations):
+      # check if at crossing
+      while crossing_index < len(crossing_locations) and x1 <= crossing_locations[crossing_index][0] <= x2:
 
         crossing_data = crossing_locations[crossing_index]
         crossing_x1 = crossing_data[0]
-        crossing_x2 = crossing_data[1]
+        crossing_y1 = crossing_data[1]
         crossing_type = crossing_data[2]
-
-        # check if at crossing
-        if x1 <= crossing_x1 <= x2 and x1 <= crossing_x2 <= x2:
-
-          isCrossing = True
+        isCrossing = True
+        
+        if crossing_type == ROAD_CROSSING:
+          print(f"Adding {crossing_type} at {crossing_x1} between {x1} and {x2}")
+          pressure_delta, section_cost = add_road_crossing(dx, dy, pipe_type, add_pipe_section)
           
-          if crossing_type == ROAD_CROSSING:
-            print(f"Adding {crossing_type} at {crossing_x1} between {x1} and {x2}")
-            pressure_delta, section_cost = add_road_crossing(dx, dy, pipe_type, add_pipe_section)
-            
-          if crossing_type == RAILWAY_CROSSING:
-            print(f"Adding {crossing_type} at {crossing_x1} between {x1} and {x2}")
-            pressure_delta, section_cost = add_railway_crossing(dx, dy, pipe_type, add_pipe_section)
-            
-          if crossing_type == WATER_CROSSING:
-            print(f"Adding {crossing_type} at {crossing_x1} and {crossing_x2} between {x1} and {x2}")
-            pressure_delta, section_cost = add_water_crossing(dx, dy, pipe_type, add_pipe_section)
+        if crossing_type == RAILWAY_CROSSING:
+          print(f"Adding {crossing_type} at {crossing_x1} between {x1} and {x2}")
+          pressure_delta, section_cost = add_railway_crossing(dx, dy, pipe_type, add_pipe_section)
+          
+        if crossing_type == WATER_CROSSING:
+          in_water = not in_water
+          start_or_end = "START" if in_water else "END"
+          print(f"Adding {crossing_type} {start_or_end} at {crossing_x1} between {x1} and {x2}")
+          pressure_delta, section_cost = add_water_crossing(dx, dy, pipe_type, in_water, add_pipe_section)
 
-          crossing_index += 1
+        crossing_index += 1
       
       # standard pipe section if not a crossing
       if not is_crossing:
@@ -544,7 +574,7 @@ if __name__ == "__main__":
             section_cost += valve_cost
 
       # add a pump station at x1 if pressure is not sufficient
-      if pressure + pressure_delta < PRESSURE_MIN:
+      if pressure + pressure_delta < PRESSURE_MIN and not in_water:
         print(f"Adding {PUMP_STATION} at {x1} due to insufficient pressure ({get_kilo_pascals(pressure + pressure_delta)} kPa < {PRESSURE_MIN} kPa)")
         pressure, pump_cost = add_pump_station(pipe_type)
         section_cost += pump_cost
