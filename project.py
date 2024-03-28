@@ -225,8 +225,8 @@ def get_kilo_pascals(pressure):
 #       elevation changes, in real life, if the pipes are
 #       implemented as such, some sections will protrude
 # NOTE: This approximation can be improved using a different
-#       approximation function for the pipe section
-#       make sure to modify the function being used in the
+#       approximation function for the pipe section.
+#       Make sure to modify the function being used in the
 #       script as defined in the variable "add_pipe_section"
 def add_90_deg_pipe_section(pipe_type, dx, dy):
 
@@ -240,8 +240,6 @@ def add_90_deg_pipe_section(pipe_type, dx, dy):
 
   KL_EQUIVALENT = NUM_90_DEG_MITRE_BENDS_VANES * KL_90_DEG_MITRE_BEND_VANES
 
-  # dx = x1 - x2
-  # dy = y1 - y2
   L_vertical = abs(dy)
   L_horizontal = abs(dx)
 
@@ -347,9 +345,9 @@ if __name__ == "__main__":
   ELEVATION_PROFILE = import_data('Elevation Profile', 'input_data/elevation_profile.csv')
 
 
-  # initialize runtime variables - valve locations
+  # initialize runtime variables - valve and crossing locations
   valve_locations = [] # array of all valve locations x-coor
-  crossing_locations = []
+  crossing_locations = [] # array of pairs of crossing locations
   crossing_valve_locations = [] # array of pairs of valves at start and end of crossings
 
 
