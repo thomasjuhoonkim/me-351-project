@@ -239,7 +239,7 @@ def add_elbowless_pipe_section(pipe_type, dx, dy):
   # pipe cost
   cost = get_pipe_cost(pipe_type, L_diagonal)
 
-  return dP, cost
+  return dP, dP_major_diagonal, dP_hydrostatic, cost
   
 
 # 1 ╗
@@ -302,27 +302,27 @@ def add_90_deg_pipe_section(pipe_type, dx, dy):
 # we can change the implementation of building a pipe
 # between two points for potential cost savings
 def add_road_crossing(dx, dy, pipe_type, add_pipe_section):
-  pressure_delta, pipe_cost = add_pipe_section(pipe_type, dx, dy)
-  return pressure_delta, pipe_cost + COMPONENT_COSTS[ROAD_CROSSING]
+  pressure_delta, major_losses, hydrostatic_change, pipe_cost = add_pipe_section(pipe_type, dx, dy)
+  return pressure_delta, major_losses, hydrostatic_change, pipe_cost + COMPONENT_COSTS[ROAD_CROSSING]
 
 # using the add_section as a parameter fed function so that
 # we can change the implementation of building a pipe
 # between two points for potential cost savings
 def add_railway_crossing(dx, dy, pipe_type, add_pipe_section):
-  pressure_delta, pipe_cost = add_pipe_section(pipe_type, dx, dy)
-  return pressure_delta, pipe_cost + COMPONENT_COSTS[RAILWAY_CROSSING]
+  pressure_delta, major_losses, hydrostatic_change, pipe_cost = add_pipe_section(pipe_type, dx, dy)
+  return pressure_delta, major_losses, hydrostatic_change, pipe_cost + COMPONENT_COSTS[RAILWAY_CROSSING]
 
 # using the add_section as a parameter fed function so that
 # we can change the implementation of building a pipe
 # between two points for potential cost savings
 def add_water_crossing(dx, dy, pipe_type, in_water, add_pipe_section):
-  pressure_delta, pipe_cost = add_pipe_section(pipe_type, dx, dy)
+  pressure_delta, major_losses, hydrostatic_change, pipe_cost = add_pipe_section(pipe_type, dx, dy)
 
   total_cost = 0
   if not in_water:
     total_cost = pipe_cost + COMPONENT_COSTS[WATER_CROSSING]
 
-  return pressure_delta, total_cost
+  return pressure_delta, major_losses, hydrostatic_change, total_cost
 
 # pump station can be treated as having no length
 # pump station has no elevation changes (zero hydrostatic pressure changes)
@@ -347,7 +347,7 @@ def add_pump_station(pipe_type):
 
   minor_losses = KL_EQUIVALENT * P * (V_AVG ** 2) / 2
 
-  return PRESSURE_MAX - minor_losses, COMPONENT_COSTS[PUMP_STATION]
+  return PRESSURE_MAX - minor_losses, minor_losses, COMPONENT_COSTS[PUMP_STATION]
 
 def add_valve(pipe_type):
 
@@ -356,7 +356,7 @@ def add_valve(pipe_type):
   V_AVG = get_average_velocity(V_RATE, A)
 
   # minor losses of valve
-  dP_valve = -1 * get_minor_loss(KL_GATE_VALVE, P, V_AVG)
+  dP_valve = get_minor_loss(KL_GATE_VALVE, P, V_AVG)
 
   return dP_valve, COMPONENT_COSTS[VALVE]
 
@@ -466,6 +466,9 @@ if __name__ == "__main__":
   minimum_cost_pipe_type = ''
   minimum_cost_pressure_data = [] # (x, pressure)
   minimum_cost_pump_station_locations = [] # (x, elevation)
+  minimum_cost_major_losses = 0
+  minimum_cost_minor_losses = 0
+  minimum_cost_gravity_losses = 0
   
 
   # determine the cheapest cost by varying pipe size
@@ -493,14 +496,20 @@ if __name__ == "__main__":
     pump_station_locations_index = []
     in_water = False
 
+    # losses
+    total_major_losses = 0
+    total_minor_losses = 0
+    total_gravity_losses = 0
+
     # initialize standard pipe function
     add_pipe_section = add_elbowless_pipe_section
 
     # add pump in the beginning
-    pressure, pump_cost = add_pump_station(pipe_type)
+    pressure, minor_losses, pump_cost = add_pump_station(pipe_type)
     pump_station_locations.append((0, 74.848999))
     pump_station_locations_index.append(0)
     total_cost += pump_cost
+    total_minor_losses += minor_losses
 
     # based on the absolute pressure at the pipe inlet
     # when submerged under lake ontario, the pipe will
@@ -551,24 +560,32 @@ if __name__ == "__main__":
         
         if crossing_type == ROAD_CROSSING:
           print(f"Adding {crossing_type} at {crossing_x1} between {x1} and {x2}")
-          pressure_delta, section_cost = add_road_crossing(dx, dy, pipe_type, add_pipe_section)
+          pressure_delta, major_losses, hydrostatic_change, section_cost = add_road_crossing(dx, dy, pipe_type, add_pipe_section)
+          total_major_losses += major_losses
+          total_gravity_losses += hydrostatic_change
           
         if crossing_type == RAILWAY_CROSSING:
           print(f"Adding {crossing_type} at {crossing_x1} between {x1} and {x2}")
-          pressure_delta, section_cost = add_railway_crossing(dx, dy, pipe_type, add_pipe_section)
+          pressure_delta, major_losses, hydrostatic_change, section_cost = add_railway_crossing(dx, dy, pipe_type, add_pipe_section)
+          total_major_losses += major_losses
+          total_gravity_losses += hydrostatic_change
           
         if crossing_type == WATER_CROSSING:
           in_water = not in_water
           start_or_end = "START" if in_water else "END"
           print(f"Adding {crossing_type} {start_or_end} at {crossing_x1} between {x1} and {x2}")
-          pressure_delta, section_cost = add_water_crossing(dx, dy, pipe_type, in_water, add_pipe_section)
+          pressure_delta, major_losses, hydrostatic_change, section_cost = add_water_crossing(dx, dy, pipe_type, in_water, add_pipe_section)
+          total_major_losses += major_losses
+          total_gravity_losses += hydrostatic_change
 
         crossing_index += 1
       
       # standard pipe section if not a crossing
       if not is_crossing:
-        pressure_delta, pipe_cost = add_pipe_section(pipe_type, dx, dy)
+        pressure_delta, major_losses, hydrostatic_change, pipe_cost = add_pipe_section(pipe_type, dx, dy)
         section_cost += pipe_cost
+        total_major_losses += major_losses
+        total_gravity_losses += hydrostatic_change
 
         # check if valves are within range, if so, add minor losses to pressure_delta
         check_index = valve_index
@@ -579,15 +596,17 @@ if __name__ == "__main__":
         
         # if there are valves within the range, add them to pressure drop and cost
         if num_valves_in_range > 0:
-          pressure_delta_valve, valve_cost = add_valve(pipe_type)
-          pressure_delta += pressure_delta_valve * num_valves_in_range
+          minor_losses, valve_cost = add_valve(pipe_type)
+          pressure_delta -= minor_losses * num_valves_in_range
           section_cost += valve_cost * num_valves_in_range
+          total_minor_losses += minor_losses
 
       # add a pump station at x1 if pressure is not sufficient
       if pressure + pressure_delta < PRESSURE_MIN and not in_water:
         print(f"Adding {PUMP_STATION} at {x1} due to insufficient pressure ({get_kilo_pascals(pressure + pressure_delta)} kPa < {PRESSURE_MIN} kPa)")
-        pressure, pump_cost = add_pump_station(pipe_type)
+        pressure, minor_losses, pump_cost = add_pump_station(pipe_type)
         section_cost += pump_cost
+        total_minor_losses += minor_losses
 
         # log pump station data
         pump_station_locations.append((x1, y1))
@@ -614,7 +633,8 @@ if __name__ == "__main__":
           del valve_locations[forward_index - 1]
 
 
-      # check if valve is within range
+      # once all valve index operations are complete,
+      # increment valve index to the next range
       while valve_index < len(valve_locations) and x1 <= valve_locations[valve_index] <= x2:
         valve_index += 1
       
@@ -640,6 +660,14 @@ if __name__ == "__main__":
     
     # checks if we are at the end of pipeline (not terminated)
     if valve_index == len(valve_locations):
+
+      print("~~~~~~~~~~~~~~~~~~~~~~~~~") # spacer for legibility
+
+      # losses
+      print(f"MAJOR LOSSES: {get_kilo_pascals(total_major_losses)} kPa")
+      print(f"MINOR LOSSES: {get_kilo_pascals(total_minor_losses)} kPa")
+      print(f"GRAVITY LOSSES {-get_kilo_pascals(total_gravity_losses)} kPa")
+
       print("~~~~~~~~~~~~~~~~~~~~~~~~~") # spacer for legibility
 
       # once the pipeline is built, we must find the pressure
@@ -648,6 +676,16 @@ if __name__ == "__main__":
       # pressure -= get_minor_loss(KL_PIPE_OUTLET, P, V_AVG)
       print("PRESSURE AT OUTLET:", get_kilo_pascals(pressure), "kPa")
       pressure_data.append([x1, pressure])
+
+      # flow properties
+      RE = get_reynolds_number(P, V_AVG, ID, MU)
+      F = get_friction_factor_colebrook(E, ID, RE)
+      print("PIPE TYPE:", pipe_type)
+      print("INNER DIAMETER:", ID)
+      print("CROSS SECTIONAL AREA:", A)
+      print("FLOW VELOCITY:", V_AVG)
+      print("REYNOLDS NUMBER:", RE)
+      print("FRICTION FACTOR:", F)
 
       # number of valves
       num_valves = len(valve_locations)
@@ -676,9 +714,17 @@ if __name__ == "__main__":
         minimum_cost_pressure_data = pressure_data
         minimum_cost_pump_station_locations = pump_station_locations
         minimum_cost_valve_locations = valve_locations
+
+        minimum_cost_major_losses = total_major_losses
+        minimum_cost_minor_losses = total_minor_losses
+        minimum_cost_gravity_losses = total_gravity_losses
   
   print() # spacer for legibility
   print("===== RESULTS =====")
+  print(f"Minimum Cost Major Losses: {get_kilo_pascals(minimum_cost_major_losses)} kPa")
+  print(f"Minimum Cost Minor Losses: {get_kilo_pascals(minimum_cost_minor_losses)} kPa")
+  print(f"Minimum Cost Gravity Losses: {-get_kilo_pascals(minimum_cost_gravity_losses)} kPa")
+  print("~~~~~~~~~~~~~~~~~~~~~~~~~") # spacer for legibility
   print(f"Minimum Cost Number of Valves: {minimum_cost_num_valves}")
   print(f"Minimum Cost Valve Cost: {minimum_cost_total_valve_cost}")
   print(f"Minimum Cost Pipe Length: {minimum_cost_pipe_length}")
